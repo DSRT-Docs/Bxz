@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 if ! command -v emcc >/dev/null 2>&1; then
-  echo "emcc not found. Install emsdk (https://emscripten.org/docs/getting_started/downloads.html)"
+  echo "emcc not found. Install emsdk."
   exit 1
 fi
 
