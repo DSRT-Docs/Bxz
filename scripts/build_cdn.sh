@@ -1,66 +1,48 @@
-#!/bin/bash
+ #!/bin/bash
 set -euo pipefail
 
-VERSION="v1"
-CDN_PATH="cdn/$VERSION"
-echo "Building DSRT CDN ($VERSION)..."
+# Read current version or default v1
+VER_FILE=".cdn_version"
+if [ -f "$VER_FILE" ]; then
+  CUR=$(cat "$VER_FILE")
+else
+  CUR="v1"
+fi
+
+# allow override via env
+if [ -n "${CDN_VERSION-}" ]; then
+  CUR="$CDN_VERSION"
+fi
+
+CDN_PATH="cdn/$CUR"
+
+echo "==== Building DSRT CDN ($CUR) ===="
 rm -rf "$CDN_PATH"
 mkdir -p "$CDN_PATH"
 
-# 1) Build JS bundle (esbuild)
-echo "-> Bundling JS with esbuild..."
-npx esbuild src/index.js \
-  --bundle \
-  --format=iife \
-  --global-name=DSRT \
-  --minify \
-  --outfile="$CDN_PATH/index.js"
+echo "-> Bundling JS (esbuild)..."
+npx esbuild src/index.js --bundle --format=iife --global-name=DSRT --minify --outfile="$CDN_PATH/index.js"
 
-# 2) Build wasm using emcc (if emcc available)
+# Copy TypeScript d.ts (if you placed it)
+if [ -f "types/index.d.ts" ]; then
+  cp types/index.d.ts "$CDN_PATH/index.d.ts"
+fi
+
+# WASM build
 if command -v emcc >/dev/null 2>&1; then
-  echo "-> Building WASM with emcc..."
-  # produce emscripten glue (dsrt.js) and dsrt.wasm in CDN_PATH
+  echo "-> Building WASM (emcc)..."
   emcc src/wasm/dsrt.cpp -O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 \
-    -s EXPORTED_FUNCTIONS='["_dsrt_add","_dsrt_dot3","_dsrt_length3"]' \
-    -s EXPORTED_RUNTIME_METHODS='["cwrap","getValue","setValue","malloc","free"]' \
+    -s EXPORTED_FUNCTIONS='["_dsrt_add","_dsrt_dot3","_dsrt_length3","_dsrt_cross","_dsrt_normalize","_dsrt_mat4_mul","_dsrt_mat4_identity","_dsrt_mat4_transpose"]' \
+    -s EXPORTED_RUNTIME_METHODS='["cwrap","getValue","setValue","malloc","free","HEAPF64"]' \
     -o "$CDN_PATH/dsrt.js"
-
-  # emcc should create dsrt.wasm next to dsrt.js automatically
-  if [ -f "$CDN_PATH/dsrt.wasm" ]; then
-    echo "-> WASM built: $CDN_PATH/dsrt.wasm"
-  else
-    echo "-> Warning: dsrt.wasm not found next to dsrt.js"
-  fi
+  # emcc creates dsrt.wasm automatically next to dsrt.js (in same dir)
 else
-  echo "-> emcc not found: skipping WASM build (install emsdk if you want WASM)."
+  echo "-> emcc not found — skipping WASM build"
 fi
 
-# 3) Generate TypeScript declarations from JS using tsc (allowJs + declaration)
-if command -v npx >/dev/null 2>&1; then
-  echo "-> Generating TypeScript declarations (index.d.ts)..."
-  # create temp output dir for declarations
-  TMP_DECL_OUT="$(mktemp -d)"
-  # run tsc with project tsconfig.json, emit declaration only to temp folder
-  npx tsc --project tsconfig.json --emitDeclarationOnly --outDir "$TMP_DECL_OUT"
-  # the declaration for entry should be at TMP_DECL_OUT/src/index.d.ts or similar
-  # normalize: move the generated declaration to cdn path root as index.d.ts
-  # try common locations
-  if [ -f "$TMP_DECL_OUT/src/index.d.ts" ]; then
-    mv "$TMP_DECL_OUT/src/index.d.ts" "$CDN_PATH/index.d.ts"
-    echo "-> Declaration generated: $CDN_PATH/index.d.ts"
-  else
-    # fallback: move any .d.ts in TMP_DECL_OUT to CDN_PATH
-    find "$TMP_DECL_OUT" -name "*.d.ts" -print -exec cp {} "$CDN_PATH/" \; || true
-    echo "-> Declarations (if any) copied to $CDN_PATH/"
-  fi
-  rm -rf "$TMP_DECL_OUT"
-else
-  echo "-> npx not found: skipping declaration generation."
-fi
-
-# 4) Copy assets if exists
+# copy assets
 if [ -d "assets" ]; then
   cp -r assets "$CDN_PATH/"
 fi
 
-echo "✅ CDN Build selesai → $CDN_PATH/"
+echo "==== DONE: CDN build -> $CDN_PATH ===="
